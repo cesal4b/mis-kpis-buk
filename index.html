@@ -268,6 +268,24 @@
   .kpi-last { font-size: 11.5px; color: var(--ink-faint); }
   .kpi-last strong { color: var(--ink-soft); }
 
+  .tarea-match-wrap { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .tarea-match-wrap h4 { font-size: 12px; color: var(--ink-soft); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .tarea-match-card {
+    border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 12px 14px; margin-bottom: 10px;
+    background: var(--surface);
+  }
+  .tarea-match-card.best { border-color: var(--accent); background: var(--accent-soft); }
+  .tarea-match-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .tarea-match-head strong { font-size: 13px; }
+  .tarea-match-score { font-size: 11px; color: var(--ink-faint); }
+  .tarea-match-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; flex-wrap: wrap; }
+  .tarea-match-row input[type="number"] { width: 70px; }
+  .tarea-result-box {
+    margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-sm); background: var(--good-soft);
+    color: var(--ink); font-size: 12.5px; line-height: 1.5;
+  }
+  .tarea-result-box .tarea-result-comment { color: var(--ink-soft); margin: 8px 0; }
+
   /* ---------- Modal ---------- */
   .modal-backdrop {
     position: fixed; inset: 0; background: rgba(10, 12, 24, 0.5); backdrop-filter: blur(2px);
@@ -516,6 +534,19 @@
           </div>
           <p class="hint">Cada ficha es un KPI o una acción clave de tu plan, ya vinculada a su categoría. Dentro de cada categoría, los pesos deben sumar 100% — puedes pedir un reparto automático en partes iguales.</p>
           <div id="kpiGroups"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head"><h2>4. Registrar una tarea</h2></div>
+          <p class="hint">Describe qué hiciste — la herramienta busca a cuál de tus KPIs pertenece (cruzando contra el nombre, el indicador, la línea estratégica y la acción clave de cada uno), para que agregues el avance sin tener que abrir cada ficha una por una.</p>
+          <div class="field">
+            <label for="tareaTexto">¿Qué hiciste?</label>
+            <textarea id="tareaTexto" rows="2" placeholder="ej. Terminé el generador de plantillas de clases, ya quedó en producción"></textarea>
+          </div>
+          <div class="modal-actions" style="justify-content:flex-start;margin-top:0;">
+            <button type="button" class="btn-primary btn-sm" id="btnIdentificarKpi">Identificar KPI →</button>
+          </div>
+          <div id="tareaMatchWrap" class="hidden"></div>
         </section>
       </div>
     </section>
@@ -2171,6 +2202,127 @@ Resultados
     document.getElementById('avUnidades').value = r.n + ' procesos vinculados';
     document.getElementById('avComentario').value = buildComentarioDraft(k, aplicarTecho, techo);
     toast('Cálculo aplicado — revisa y guarda el avance.');
+  });
+
+  /* ---------- Registrar una tarea → identificar a qué KPI pertenece ---------- */
+  function kpiSearchableText(k) {
+    return [k.nombre, k.indicador, k.accionEstrategica, k.accionClave]
+      .concat((k.procesos || []).map(function (p) { return p.nombre; }))
+      .filter(Boolean).join(' ');
+  }
+
+  function scoreTaskAgainstKpi(taskText, k) {
+    var tokens = tokenize(taskText);
+    if (!tokens.length) return 0;
+    var target = normalize(kpiSearchableText(k));
+    return tokens.reduce(function (s, t) { return s + (target.indexOf(t) !== -1 ? 1 : 0); }, 0);
+  }
+
+  function rankKpiMatches(taskText) {
+    return state.kpis
+      .map(function (k) { return { kpi: k, score: scoreTaskAgainstKpi(taskText, k) }; })
+      .filter(function (m) { return m.score > 0; })
+      .sort(function (a, b) { return b.score - a.score; })
+      .slice(0, 3);
+  }
+
+  function kpiOptionsHtml(selectedId) {
+    return state.kpis.map(function (k) {
+      return '<option value="' + k.id + '"' + (k.id === selectedId ? ' selected' : '') + '>' + esc(k.nombre) + '</option>';
+    }).join('');
+  }
+
+  var lastTareaTexto = '';
+
+  function renderTareaMatches(taskText) {
+    var wrap = document.getElementById('tareaMatchWrap');
+    if (!state.kpis.length) {
+      wrap.innerHTML = '<div class="tarea-match-wrap"><p class="hint">Aún no tienes KPIs creados — agrega al menos uno arriba antes de registrar tareas.</p></div>';
+      wrap.classList.remove('hidden');
+      return;
+    }
+    var matches = rankKpiMatches(taskText);
+    var cardsHtml = matches.map(function (m, i) {
+      return '<div class="tarea-match-card' + (i === 0 ? ' best' : '') + '" data-match-kpi="' + m.kpi.id + '">' +
+        '<div class="tarea-match-head"><strong>' + esc(m.kpi.nombre) + '</strong><span class="tarea-match-score">' + m.score + ' palabra(s) en común · ' + esc((catDef(m.kpi.categoriaId) || {}).nombre || '') + '</span></div>' +
+        '<div class="tarea-match-row">' +
+          '<label style="margin:0;font-size:11.5px;">% de avance de esta tarea</label>' +
+          '<input type="number" min="0" max="100" data-match-pct placeholder="0">' +
+          '<button type="button" class="btn-primary btn-sm" data-add-to-kpi="' + m.kpi.id + '">Agregar a este KPI</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+    var fallback = '<div class="tarea-match-card" data-match-kpi="__manual__">' +
+      '<div class="tarea-match-head"><strong>¿Ninguno es correcto?</strong></div>' +
+      '<div class="tarea-match-row">' +
+        '<select data-manual-kpi style="min-width:220px;"><option value="">Elige un KPI…</option>' + kpiOptionsHtml(null) + '</select>' +
+        '<label style="margin:0;font-size:11.5px;">%</label>' +
+        '<input type="number" min="0" max="100" data-manual-pct placeholder="0">' +
+        '<button type="button" class="btn-secondary btn-sm" data-add-manual>Agregar</button>' +
+      '</div>' +
+    '</div>';
+    wrap.innerHTML = '<div class="tarea-match-wrap"><h4>' + (matches.length ? '¿A cuál de tus KPIs pertenece?' : 'No encontramos una coincidencia clara — elige el KPI manualmente') + '</h4>' + cardsHtml + fallback + '<div id="tareaResultBox"></div></div>';
+    wrap.classList.remove('hidden');
+  }
+
+  function addTareaToKpi(kpiId, pct, taskText) {
+    var k = state.kpis.find(function (x) { return x.id === kpiId; });
+    if (!k) return;
+    if (!Array.isArray(k.procesos)) k.procesos = [];
+    k.procesos.push({ id: uid('proc'), nombre: taskText, avance: Math.max(0, Math.min(100, Number(pct) || 0)), funcion: '', cerrado: false });
+    persist();
+    render();
+    var r = computeProcesosResumen(k.procesos, 0, false);
+    var box = document.getElementById('tareaResultBox');
+    if (box) {
+      box.innerHTML = '<div class="tarea-result-box">' +
+        '✓ Agregada a <b>' + esc(k.nombre) + '</b>. Avance recalculado con ' + r.n + ' tarea(s): <b>' + fmtPct(r.crudo) + '</b> (meta ' + esc(k.meta || '–') + ').' +
+        '<div class="tarea-result-comment">' + esc(buildComentarioDraft(k, false, 0)) + '</div>' +
+        '<div class="modal-actions" style="justify-content:flex-start;margin-top:0;">' +
+          '<button type="button" class="btn-secondary btn-sm" data-copy-tarea-result>Copiar mensaje</button>' +
+          '<button type="button" class="btn-primary btn-sm" data-open-avance-kpi="' + k.id + '">Abrir ficha para guardar avance →</button>' +
+        '</div>' +
+      '</div>';
+    }
+    document.getElementById('tareaTexto').value = '';
+  }
+
+  document.getElementById('btnIdentificarKpi').addEventListener('click', function () {
+    var text = document.getElementById('tareaTexto').value.trim();
+    if (!text) { toast('Describe primero qué hiciste.'); return; }
+    lastTareaTexto = text;
+    renderTareaMatches(text);
+  });
+
+  document.getElementById('tareaMatchWrap').addEventListener('click', function (e) {
+    var addBtn = e.target.closest('[data-add-to-kpi]');
+    if (addBtn) {
+      var card = addBtn.closest('.tarea-match-card');
+      var pct = card.querySelector('[data-match-pct]').value;
+      addTareaToKpi(addBtn.getAttribute('data-add-to-kpi'), pct, lastTareaTexto);
+      return;
+    }
+    if (e.target.closest('[data-add-manual]')) {
+      var manualCard = e.target.closest('.tarea-match-card');
+      var kpiId = manualCard.querySelector('[data-manual-kpi]').value;
+      if (!kpiId) { toast('Elige un KPI de la lista.'); return; }
+      var mpct = manualCard.querySelector('[data-manual-pct]').value;
+      addTareaToKpi(kpiId, mpct, lastTareaTexto);
+      return;
+    }
+    var copyBtn = e.target.closest('[data-copy-tarea-result]');
+    if (copyBtn) {
+      var comment = copyBtn.closest('.tarea-result-box').querySelector('.tarea-result-comment').textContent;
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(comment).then(function () { toast('Mensaje copiado.'); });
+      return;
+    }
+    var openBtn = e.target.closest('[data-open-avance-kpi]');
+    if (openBtn) {
+      var id = openBtn.getAttribute('data-open-avance-kpi');
+      openAvanceModal(id);
+      document.getElementById('procesosPanel').open = true;
+      document.getElementById('btnUsarCalculoProcesos').click();
+    }
   });
 
   function openAvanceModal(id) {
