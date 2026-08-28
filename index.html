@@ -683,7 +683,16 @@
         <div class="field"><label for="avAvance">Avance (%)</label><input type="number" id="avAvance" min="0" max="100" required></div>
       </div>
       <div class="field"><label for="avUnidades">Avance en unidades (opcional)</label><input type="text" id="avUnidades" placeholder="ej. 3 de 5 proyectos"></div>
-      <div class="field"><label for="avComentario">Comentario</label><textarea id="avComentario" rows="3" placeholder="Qué hiciste, con qué evidencia" required></textarea></div>
+      <div class="field">
+        <label for="avComentario">Comentario</label>
+        <textarea id="avComentario" rows="3" placeholder="Qué hiciste, con qué evidencia" required></textarea>
+        <button type="button" class="btn-ghost btn-sm" id="btnGenerarComentarioPrompt" style="align-self:flex-start;margin-top:4px;">✨ Generar prompt para redactar esto con IA</button>
+      </div>
+      <div id="comentarioPromptWrap" class="hidden field">
+        <p class="hint">Copia este prompt, pégalo en tu IA de preferencia, y pega su respuesta arriba en Comentario.</p>
+        <textarea id="comentarioPromptOutput" rows="8" readonly style="font-family: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace; font-size:11.5px;"></textarea>
+        <button type="button" class="btn-secondary btn-sm" id="btnCopyComentarioPrompt" style="align-self:flex-start;margin-top:6px;">Copiar prompt</button>
+      </div>
       <div class="modal-actions">
         <button type="button" class="btn-ghost" data-close>Cancelar</button>
         <button type="submit" class="btn-primary">Guardar avance</button>
@@ -2325,6 +2334,55 @@ Resultados
     }
   });
 
+  function buildComentarioPrompt(k) {
+    var procesos = (k.procesos || []).slice();
+    var avanceInput = document.getElementById('avAvance').value;
+    var avanceValue = avanceInput !== '' ? Number(avanceInput) : (procesos.length ? computeProcesosResumen(procesos, 0, false).crudo : null);
+    var procesosLines = procesos.length
+      ? procesos.map(function (p) { return '- ' + p.nombre + ' — ' + Number(p.avance) + '%' + (p.cerrado ? ' (cerrado/entregado)' : '') + (p.funcion ? ' [' + p.funcion + ']' : ''); }).join('\n')
+      : '(no hay procesos/tareas registradas — usa solo la información del KPI)';
+    var lines = [
+      'Actúa como redactor de reportes de desempeño institucional. Necesito el texto del campo "Comentario" para actualizar mi avance de este KPI en BUK.',
+      '',
+      'Requisitos del comentario:',
+      '- En español, en primera persona, entre 3 y 5 líneas.',
+      '- Profesional y concreto: qué se hizo, con qué evidencia — sin relleno ni frases genéricas.',
+      '- Menciona lo completado y lo que sigue en curso, y cierra comparando el avance contra la meta.',
+      '- Devuélveme SOLO el texto del comentario, sin explicaciones ni comillas alrededor.',
+      '',
+      'Datos del KPI:',
+      '- Nombre: ' + k.nombre,
+      '- Categoría: ' + ((catDef(k.categoriaId) || {}).nombre || '—'),
+      '- Meta: ' + (k.meta || '—'),
+      '- Tipo de medición: ' + (TIPO_LABEL[k.tipo] || k.tipo || '—') + ' — ' + (TIPO_TIP[k.tipo] || ''),
+      '- Indicador / fórmula: ' + (k.indicador || '—'),
+      '- Avance a reportar: ' + (avanceValue !== null ? (Math.round(avanceValue * 10) / 10) + '%' : '(defínelo tú a partir de lo de abajo)'),
+      '',
+      'Tareas/procesos que sustentan este avance:',
+      procesosLines
+    ];
+    return lines.join('\n');
+  }
+
+  document.getElementById('btnGenerarComentarioPrompt').addEventListener('click', function () {
+    var k = currentProcesosKpi();
+    if (!k) return;
+    document.getElementById('comentarioPromptOutput').value = buildComentarioPrompt(k);
+    document.getElementById('comentarioPromptWrap').classList.remove('hidden');
+  });
+
+  document.getElementById('btnCopyComentarioPrompt').addEventListener('click', function () {
+    var ta = document.getElementById('comentarioPromptOutput');
+    var done = function () { toast('Prompt copiado — pégalo en tu IA de preferencia.'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(ta.value).then(done, function () { ta.select(); document.execCommand('copy'); done(); });
+    } else {
+      ta.select();
+      document.execCommand('copy');
+      done();
+    }
+  });
+
   function openAvanceModal(id) {
     var k = state.kpis.find(function (x) { return x.id === id; });
     if (!k) return;
@@ -2338,6 +2396,7 @@ Resultados
     document.getElementById('procTechoActivo').checked = false;
     document.getElementById('procTechoValor').value = 80;
     document.getElementById('procesosPanel').open = false;
+    document.getElementById('comentarioPromptWrap').classList.add('hidden');
     if (!Array.isArray(k.procesos)) k.procesos = [];
     renderProcesos(k);
     renderHistorial(k);
